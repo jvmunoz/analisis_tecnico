@@ -1,0 +1,17 @@
+flowchart TD
+    A[Inicio] --> B[Obtener tickers IBEX]
+    B --> C[Cargar cartera.csv]
+    C --> D[Construir lista de tickers]
+    D --> E[Descargar datos historicos y saneamiento]
+    E --> F{Por cada ticker}
+    F --> G[Calcular estrategias T/B/RSI/MACD]
+    G --> H[Construir df_viz + metricas]
+    H --> I[Detectar cambios recientes]
+    H --> J[Acumular metricas globales]
+    F --> K[Fin loop]
+    K --> L[Informes generales]
+    L --> M[Analisis agregado]
+    M --> N[Analisis enriquecido + asignacion riesgo]
+    N --> O[Journal + correlaciones + heatmap]
+    O --> P[Informes enriquecidos]
+    P --> Q[Fin]

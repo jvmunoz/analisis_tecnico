@@ -1,0 +1,78 @@
+{
+  "batch_mode": true,
+  "fecha_inicio_sistema": "2020-01-01",
+  "fecha_fin": "hoy",
+  "ask_end_date": true,
+  "data_quality_report": true,
+  "data_validation": {
+    "enabled": true,
+    "min_rows_per_ticker": 252,
+    "max_missing_close_pct": 0.05,
+    "max_zero_volume_pct": 0.5
+  },
+  "export_results": {
+    "enabled": true,
+    "json": true,
+    "parquet": true
+  },
+  "signal_trace": {
+    "enabled": true,
+    "csv": true,
+    "json": false
+  },
+  "error_summary": {
+    "enabled": true,
+    "csv": true,
+    "json": true
+  },
+  "data_cache": {
+    "enabled": true,
+    "force_refresh": false,
+    "clear_on_start": false,
+    "max_age_days": null,
+    "max_tickers_per_run": null,
+    "exclude_tickers": []
+  },
+  "reproducibilidad": {
+    "enabled": true,
+    "seed": 42,
+    "snapshot": true
+  },
+  "benchmarks": ["^IBEX"],
+  "performance": {
+    "max_tickers": null,
+    "max_runtime_minutes": null
+  },
+  "runtime_limit_minutes": 30,
+  "heartbeat_seconds": 60,
+  "costes_transaccion": 0.001,
+  "execution_delay": 1,
+  "slippage": {
+    "bps": 5.0,
+    "atr_mult": 0.0,
+    "vol_mult": 0.05
+  },
+  "params": {
+    "tendencia": {"short_window": 50, "long_window": 200},
+    "bollinger": {"window": 30, "num_std_dev": 2},
+    "rsi": {"window": 14, "umbral_compra": 30, "umbral_salida": 60},
+    "macd": {"fast_period": 8, "slow_period": 20, "signal_period": 9}
+  },
+  "pesos_estrategias": {"tendencia": 0.357, "bollinger": 0.272, "rsi": 0.240, "macd": 0.131},
+  "analisis_avanzado": {
+    "enable_walk_forward": true,
+    "enable_sensitivity": true,
+    "enable_stress_tests": true,
+    "solo_cartera": false,
+    "max_tickers": null,
+    "walk_forward": {"train_years": 3, "test_years": 1, "step_years": 1, "metric": "Ratio de Sharpe"},
+    "sensitivity_metric": "Ratio de Sharpe",
+    "bootstrap": {"iters": 300, "seed": 42}
+  },
+  "grid_parametros": {
+    "tendencia": {"short_window": [20, 50, 80], "long_window": [100, 140, 200]},
+    "bollinger": {"window": [20, 30, 40], "num_std_dev": [2.0, 2.5, 3.0]},
+    "rsi": {"window": [10, 14, 20], "umbral_compra": [25, 30, 35], "umbral_salida": [50, 55, 60]},
+    "macd": {"fast_period": [8, 12], "slow_period": [20, 26], "signal_period": [9]}
+  }
+}

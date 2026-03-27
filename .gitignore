@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# IDE
+.vscode/
+
+# Local copies / backups
+Prueba - copia/
+
+# Runtime data and cache
+Prueba/cache/
+Prueba/runs/
+
+# Generated reports and exports (root and subfolders)
+**/ANALISIS_3D_INTERACTIVO_*.html
+**/Analisis_tecnico_tabla_completa_enriquecido_*.pdf
+**/Asignacion_por_riesgo_enriquecido_*.pdf
+**/DASHBOARD_INDICADORES_TECNICOS_*.pdf
+**/INFORME_*.pdf
+**/Inversion_Estrategica_Largo_Plazo_*.pdf
+**/INVERSION_ESTRATEGICA_LARGO_PLAZO_*.pdf
+**/STRESS_*.csv
+**/WALK_FORWARD_*.csv
+**/dashboard_data_*.csv
+**/journal_operaciones_hasta_*.csv
+**/heatmap_sectores.png
+**/SENS_*.png
+
+# Generated datasets / logs
+**/DATA_QUALITY_*.csv
+**/DATA_VALIDATION_*.csv
+**/RESULTADOS_*.json
+**/RESULTADOS_*.parquet
+**/RESULTADOS_VIZ_*.parquet
+**/RUN_SNAPSHOT_*.json
+**/RUN_SUMMARY_*.json
+**/ARTIFACTS_INDEX_*.json
+**/ERROR_RESUMEN_*.csv
+**/ERROR_RESUMEN_*.json
+**/SENIALES_*.csv
+**/run.log

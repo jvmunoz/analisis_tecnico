@@ -1,0 +1,12 @@
+Fecha,Ticker,Tipo,Precio,Cantidad,Notas
+09/11/2014,CABK.MC,COMPRA,4.145,1001,Entrada inicial
+06/12/2014,CABK.MC,COMPRA,0,12,Remuneración accionista
+14/03/2015,CABK.MC,COMPRA,0,10,Remuneración accionista
+03/10/2015,CABK.MC,COMPRA,0,10,Remuneración accionista
+18/03/2016,CABK.MC,COMPRA,0,16,Remuneración accionista
+05/12/2016,CABK.MC,COMPRA,0,14,Remuneración accionista
+29/03/2021,CABK.MC,COMPRA,4.883,684,Bancaja
+29/12/2025,IBE.MC,COMPRA,18.341,217,Entrada inicial
+02/01/2026,ELE.MC,COMPRA,30.88,129,Entrada inicial
+10/02/2026,ELE.MC,VENTA,31.86,129,Salida
+11/02/2026,IBE.MC,COMPRA,19.845,301,Ampliación
