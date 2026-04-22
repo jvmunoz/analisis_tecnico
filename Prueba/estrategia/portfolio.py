@@ -72,6 +72,8 @@ def gestionar_journal_operaciones(
     """
     cols = [
         "Fecha_Deteccion",
+        "Fecha_Actualizacion",
+        "Fecha_Cierre",
         "Ticker",
         "Setup",
         "Precio_Entrada",
@@ -84,22 +86,39 @@ def gestionar_journal_operaciones(
         "Precio_Ultimo",
         "P&L_%",
     ]
+    eventos_cols = [
+        "Fecha_Evento",
+        "Ticker",
+        "Setup",
+        "Estado_Previo",
+        "Estado_Nuevo",
+        "Tipo_Evento",
+        "Motivo",
+        "Precio",
+        "P&L_%",
+    ]
 
     # 1. Identificar y consolidar journals del run actual + historicos de runs previos
     cwd = Path.cwd()
     archivos_locales = sorted(cwd.glob("journal_operaciones*.csv"))
     archivos_journal = {str(p.resolve()) for p in archivos_locales}
+    archivos_eventos_locales = sorted(cwd.glob("journal_eventos*.csv"))
+    archivos_eventos = {str(p.resolve()) for p in archivos_eventos_locales}
 
     # Buscar carpeta runs en la ruta actual (normalmente .../Prueba/runs/YYYYMMDD)
     runs_root = next((p for p in [cwd, *cwd.parents] if p.name == "runs"), None)
     if runs_root is not None and runs_root.exists():
         for p in runs_root.glob("*/journal_operaciones_hasta_*.csv"):
             archivos_journal.add(str(p.resolve()))
+        for p in runs_root.glob("*/journal_eventos_hasta_*.csv"):
+            archivos_eventos.add(str(p.resolve()))
 
     archivos_journal = sorted(archivos_journal)
     print(f"DEBUG: Archivos de diario encontrados: {archivos_journal}")
     dataframes = []
     fechas_historia_files = []
+    eventos_dataframes = []
+    fechas_historia_eventos_files = []
 
     for f in archivos_journal:
         try:
@@ -123,14 +142,47 @@ def gestionar_journal_operaciones(
         except:
             pass
 
+    for f in sorted(archivos_eventos):
+        try:
+            base_name = os.path.basename(f)
+            m_fecha = re.search(r"hasta_(\d{8})\.csv$", base_name)
+            if m_fecha:
+                fechas_historia_eventos_files.append(
+                    pd.to_datetime(m_fecha.group(1), format="%Y%m%d")
+                )
+            try:
+                temp_df = pd.read_csv(f, encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                temp_df = pd.read_csv(f, encoding="latin1")
+            if not temp_df.empty and "Fecha_Evento" in temp_df.columns:
+                temp_df["Fecha_Evento"] = pd.to_datetime(
+                    temp_df["Fecha_Evento"], errors="coerce"
+                ).dt.strftime("%Y-%m-%d")
+            eventos_dataframes.append(temp_df)
+        except:
+            pass
+
     if dataframes:
         df_journal = pd.concat(dataframes, ignore_index=True)
+        # Compatibilidad hacia atrás: añadir columnas nuevas si no existen
+        for c in cols:
+            if c not in df_journal.columns:
+                df_journal[c] = pd.NA
         df_journal = df_journal.drop_duplicates(
             subset=["Fecha_Deteccion", "Ticker", "Setup"], keep="last"
         )
         df_journal = df_journal.reset_index(drop=True)
     else:
         df_journal = pd.DataFrame(columns=cols)
+
+    if eventos_dataframes:
+        df_eventos = pd.concat(eventos_dataframes, ignore_index=True)
+        for c in eventos_cols:
+            if c not in df_eventos.columns:
+                df_eventos[c] = pd.NA
+        df_eventos = df_eventos[eventos_cols].copy()
+    else:
+        df_eventos = pd.DataFrame(columns=eventos_cols)
 
     fecha_analisis = fecha_v if fecha_v else datetime.now().strftime("%Y-%m-%d")
     fecha_analisis_norm = pd.to_datetime(fecha_analisis).strftime("%Y-%m-%d")
@@ -152,6 +204,8 @@ def gestionar_journal_operaciones(
         ):
             nueva_fila = {
                 "Fecha_Deteccion": fecha_analisis_norm,
+                "Fecha_Actualizacion": fecha_analisis_norm,
+                "Fecha_Cierre": "",
                 "Ticker": ticker,
                 "Setup": s["Setup"],
                 "Precio_Entrada": s["Entrada"],
@@ -165,6 +219,17 @@ def gestionar_journal_operaciones(
                 "P&L_%": 0.0,
             }
             df_journal.loc[len(df_journal)] = nueva_fila
+            df_eventos.loc[len(df_eventos)] = {
+                "Fecha_Evento": fecha_analisis_norm,
+                "Ticker": ticker,
+                "Setup": s["Setup"],
+                "Estado_Previo": "",
+                "Estado_Nuevo": "ABIERTA",
+                "Tipo_Evento": "APERTURA",
+                "Motivo": "Nueva señal VERDE",
+                "Precio": s["Precio"],
+                "P&L_%": 0.0,
+            }
 
     # 4. Actualizar seguimiento de todas las posiciones activas (ABIERTA o VIGILANCIA)
     for i, row in df_journal.iterrows():
@@ -189,6 +254,7 @@ def gestionar_journal_operaciones(
                 if ent_val != 0:
                     p_l_val = ((precio_act_f - ent_val) / ent_val) * 100
                     df_journal.loc[i, "P&L_%"] = round(p_l_val, 2)
+                df_journal.loc[i, "Fecha_Actualizacion"] = fecha_analisis_norm
 
                 # Lógica de estados (Cierres > Alertas > Abierta)
                 nuevo_estado = "ABIERTA"
@@ -210,6 +276,42 @@ def gestionar_journal_operaciones(
                         nuevo_estado = "VIGILANCIA (T1)"
 
                 df_journal.loc[i, "Estado_Actual"] = nuevo_estado
+                if "CERRADA" in nuevo_estado:
+                    df_journal.loc[i, "Fecha_Cierre"] = fecha_analisis_norm
+
+                if nuevo_estado != estado_act:
+                    if "CERRADA" in nuevo_estado:
+                        tipo_evento = "CIERRE"
+                    elif "VIGILANCIA" in nuevo_estado:
+                        tipo_evento = "ALERTA"
+                    elif nuevo_estado == "ABIERTA" and "VIGILANCIA" in estado_act:
+                        tipo_evento = "REACTIVACION"
+                    else:
+                        tipo_evento = "CAMBIO_ESTADO"
+
+                    motivo_evento = nuevo_estado
+                    if "STOP" in nuevo_estado:
+                        motivo_evento = "Stop alcanzado"
+                    elif "TARGET" in nuevo_estado:
+                        motivo_evento = "Objetivo T2 alcanzado"
+                    elif "DETERIORO" in nuevo_estado:
+                        motivo_evento = "Deterioro técnico (Semáforo ROJO)"
+                    elif "VIGILANCIA (T2)" in nuevo_estado:
+                        motivo_evento = "Proximidad a T2"
+                    elif "VIGILANCIA (T1)" in nuevo_estado:
+                        motivo_evento = "Proximidad a T1"
+
+                    df_eventos.loc[len(df_eventos)] = {
+                        "Fecha_Evento": fecha_analisis_norm,
+                        "Ticker": ticker,
+                        "Setup": row.get("Setup", ""),
+                        "Estado_Previo": estado_act,
+                        "Estado_Nuevo": nuevo_estado,
+                        "Tipo_Evento": tipo_evento,
+                        "Motivo": motivo_evento,
+                        "Precio": round(precio_act_f, 2),
+                        "P&L_%": df_journal.loc[i, "P&L_%"],
+                    }
 
                 # Actualizar Tipo e Icono según el nuevo estado
                 if nuevo_estado == "ABIERTA":
@@ -255,6 +357,8 @@ def gestionar_journal_operaciones(
     # 7. Reordenar columnas para mejor legibilidad (Tipo e Icono después de Estado_Actual)
     col_order = [
         "Fecha_Deteccion",
+        "Fecha_Actualizacion",
+        "Fecha_Cierre",
         "Ticker",
         "Setup",
         "Precio_Entrada",
@@ -269,9 +373,9 @@ def gestionar_journal_operaciones(
     ]
     df_journal = df_journal[col_order]
 
-    # 8. Ordenar por fecha descendente (más recientes primero) y guardar
+    # 8. Ordenar por última actualización (y detección como desempate)
     df_journal = df_journal.sort_values(
-        by="Fecha_Deteccion", ascending=False
+        by=["Fecha_Actualizacion", "Fecha_Deteccion"], ascending=False
     ).reset_index(drop=True)
 
     abs_new = os.path.abspath(new_filename)
@@ -282,12 +386,61 @@ def gestionar_journal_operaciones(
     except Exception as e:
         print(f"ERROR: No se pudo guardar el diario {new_filename}: {e}")
 
+    # 9. Persistir journal de eventos (una fila por evento de estado)
+    try:
+        if not df_eventos.empty:
+            df_eventos = df_eventos[eventos_cols].copy()
+            df_eventos["Fecha_Evento"] = pd.to_datetime(
+                df_eventos["Fecha_Evento"], errors="coerce"
+            ).dt.strftime("%Y-%m-%d")
+            df_eventos = df_eventos.drop_duplicates(
+                subset=[
+                    "Fecha_Evento",
+                    "Ticker",
+                    "Setup",
+                    "Estado_Previo",
+                    "Estado_Nuevo",
+                    "Tipo_Evento",
+                ],
+                keep="last",
+            )
+            df_eventos = df_eventos.sort_values(
+                by="Fecha_Evento", ascending=False
+            ).reset_index(drop=True)
+
+        fechas_eventos = (
+            pd.to_datetime(df_eventos["Fecha_Evento"], errors="coerce")
+            .dropna()
+            .tolist()
+            if not df_eventos.empty
+            else []
+        )
+        fechas_eventos.append(pd.to_datetime(fecha_analisis_norm))
+        fechas_eventos.extend(fechas_historia_eventos_files)
+        max_fecha_eventos_str = max(fechas_eventos).strftime("%Y%m%d")
+        eventos_filename = f"journal_eventos_hasta_{max_fecha_eventos_str}.csv"
+        abs_eventos = os.path.abspath(eventos_filename)
+        df_eventos.to_csv(abs_eventos, index=False, encoding="utf-8-sig")
+        print(f"Journal de eventos actualizado: {eventos_filename}")
+    except Exception as e:
+        print(f"ERROR: No se pudo guardar el journal de eventos: {e}")
+
     # Normalizar rutas para evitar borrar el archivo que acabamos de guardar.
     # Limitar borrado al directorio actual para no eliminar historicos de runs previos.
     for f in archivos_locales:
         if os.path.exists(f):
             abs_f = os.path.abspath(f)
             if abs_f != abs_new:
+                try:
+                    os.remove(abs_f)
+                except:
+                    pass
+
+    # Limpiar journals de eventos antiguos en el directorio actual
+    for f in archivos_eventos_locales:
+        if os.path.exists(f):
+            abs_f = os.path.abspath(f)
+            if "abs_eventos" in locals() and abs_f != abs_eventos:
                 try:
                     os.remove(abs_f)
                 except:
