@@ -9,6 +9,26 @@ from .reports_reportlab import generar_informe_cartera_pdf
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 
+
+def _retorno_ventana(df_viz, close, sesiones):
+    if len(df_viz) <= sesiones:
+        return 0
+    precio_previo = df_viz["close"].iloc[-(sesiones + 1)]
+    if precio_previo == 0 or pd.isna(precio_previo):
+        return 0
+    return close / precio_previo - 1
+
+
+def _caida_reciente_fuerte(df_viz, last, close, macd_bias):
+    ret_5 = _retorno_ventana(df_viz, close, 5)
+    ret_10 = _retorno_ventana(df_viz, close, 10)
+    return bool(
+        close < last["sma_short"]
+        and macd_bias == "Baj."
+        and (ret_5 <= -0.05 or ret_10 <= -0.08)
+    )
+
+
 def calcular_analisis_enriquecido(lista_datos_completos):
     """
     Traduce las reglas de INSTRUCCIONES_CHATGPT_20251224.txt a lógica determinista de Python.
@@ -49,6 +69,9 @@ def calcular_analisis_enriquecido(lista_datos_completos):
         macd_bias = "Alc." if last["macd_histogram"] > 0 else "Baj."
         trend_sma = "Alc." if last["sma_short"] > last["sma_long"] else "Baj."
         rvol = last["rvol"]
+        caida_reciente_fuerte = _caida_reciente_fuerte(
+            df_viz, last, close, macd_bias
+        )
 
         # 2. Niveles Absolutos (Paso 2)
         sop_est = close * (1 - dist_sop_p)
@@ -114,6 +137,7 @@ def calcular_analisis_enriquecido(lista_datos_completos):
                     and adx_regime in ["Trend", "Neutral"]
                     and (rsi_val <= 45 or rsi_flag == "SV")
                     and rvol >= 0.15
+                    and not caida_reciente_fuerte
                 ):  # Cambiado de 1.15 a 0.15
                     semaforo = "VERDE"
                     estado = "EJECUTAR"
@@ -177,6 +201,7 @@ def calcular_analisis_enriquecido(lista_datos_completos):
                     "macd_bias": macd_bias,
                     "trend_sma": trend_sma,
                     "rvol": rvol,
+                    "caida_reciente_fuerte": caida_reciente_fuerte,
                 },
             }
         )
