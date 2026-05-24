@@ -6,6 +6,9 @@ from pathlib import Path
 import pandas as pd
 
 
+MAX_APERTURA_SOBRE_ENTRADA_PCT = 1.5
+
+
 def _leer_csv_journal(path):
     try:
         try:
@@ -30,6 +33,20 @@ def _operacion_id(fecha_deteccion, ticker, setup):
     if not fecha_norm or not ticker or not setup:
         return ""
     return f"{fecha_norm.replace('-', '')}|{ticker}|{setup}"
+
+
+def _precio_demasiado_alejado_de_entrada(
+    senal, max_pct=MAX_APERTURA_SOBRE_ENTRADA_PCT
+):
+    try:
+        entrada = float(senal.get("Entrada", 0))
+        precio = float(senal.get("Precio", 0))
+    except (TypeError, ValueError):
+        return False
+    if entrada <= 0 or precio <= 0:
+        return False
+    exceso_pct = ((precio / entrada) - 1) * 100
+    return exceso_pct > max_pct
 
 
 def _tipo_evento_desde_estado(estado_previo, estado_nuevo):
@@ -65,6 +82,46 @@ def _motivo_desde_estado(estado_nuevo, tipo_evento):
     if tipo_evento == "REACTIVACION":
         return "ABIERTA"
     return estado_nuevo
+
+
+def _ordenar_eventos_journal(df_eventos):
+    if df_eventos is None or df_eventos.empty:
+        return df_eventos
+
+    prioridad_tipo = {
+        "CIERRE": 0,
+        "CAMBIO_ESTADO": 1,
+        "REACTIVACION": 2,
+        "ALERTA": 3,
+        "APERTURA": 4,
+    }
+    df_ordenado = df_eventos.copy()
+    df_ordenado["_Fecha_Evento_Orden"] = pd.to_datetime(
+        df_ordenado["Fecha_Evento"], errors="coerce"
+    )
+    df_ordenado["_Fecha_Deteccion_Orden"] = pd.to_datetime(
+        df_ordenado["Fecha_Deteccion"], errors="coerce"
+    )
+    df_ordenado["_Tipo_Evento_Orden"] = (
+        df_ordenado["Tipo_Evento"].map(prioridad_tipo).fillna(99)
+    )
+    df_ordenado = df_ordenado.sort_values(
+        by=[
+            "_Fecha_Evento_Orden",
+            "_Fecha_Deteccion_Orden",
+            "Ticker",
+            "Setup",
+            "_Tipo_Evento_Orden",
+        ],
+        ascending=[False, False, True, True, True],
+    )
+    return df_ordenado.drop(
+        columns=[
+            "_Fecha_Evento_Orden",
+            "_Fecha_Deteccion_Orden",
+            "_Tipo_Evento_Orden",
+        ]
+    ).reset_index(drop=True)
 
 
 def _construir_evento_journal(
@@ -139,13 +196,22 @@ def normalizar_y_deduplicar_eventos(df_eventos, eventos_cols):
     if (df_eventos["Operacion_ID"] != "").any():
         df_eventos = df_eventos[df_eventos["Operacion_ID"] != ""].copy()
 
+    # Una apertura debe representar la creacion de una operacion ABIERTA. Si el
+    # primer snapshot disponible ya estaba en vigilancia, no inventamos una
+    # apertura con ese estado porque duplica la alerta real y confunde el orden.
+    apertura_ambigua = (
+        (df_eventos["Estado_Previo"] == "")
+        & (df_eventos["Tipo_Evento"] == "APERTURA")
+        & (df_eventos["Estado_Nuevo"] != "ABIERTA")
+    )
+    if apertura_ambigua.any():
+        df_eventos = df_eventos[~apertura_ambigua].copy()
+
     df_eventos = df_eventos.drop_duplicates(
         subset=dedup_cols,
         keep="last",
     )
-    return df_eventos.sort_values(by="Fecha_Evento", ascending=False).reset_index(
-        drop=True
-    )
+    return _ordenar_eventos_journal(df_eventos)
 
 
 def columnas_exportacion_eventos(eventos_cols):
@@ -176,7 +242,7 @@ def reconstruir_eventos_desde_snapshots(snapshots, eventos_cols):
             estado_previo = estados_previos.get(key)
 
             if estado_previo is None:
-                if estado_nuevo and not estado_nuevo.startswith("CERRADA"):
+                if estado_nuevo == "ABIERTA":
                     eventos.append(
                         _construir_evento_journal(
                             fecha_snapshot,
@@ -430,6 +496,8 @@ def gestionar_journal_operaciones(
     # 3. Añadir nuevas señales VERDE detectadas hoy
     nuevas_senales = [d for d in data_enriquecida if d["Semaforo"] == "VERDE"]
     for s in nuevas_senales:
+        if _precio_demasiado_alejado_de_entrada(s):
+            continue
         ticker = s["Ticker"]
         if (
             ticker

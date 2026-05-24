@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import textwrap
 
 from .ibex import SECTORES_IBEX
+from .levels import calcular_soportes_resistencias
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
@@ -445,6 +446,7 @@ def generar_pdf_cambios_estado(
             import gc
 
             gc.collect()
+
         return
 
     # Filtrar solo los cambios en las últimas 5 fechas
@@ -546,6 +548,8 @@ def generar_pdf_dashboard_tecnico(
     print(f"\nGenerando Dashboard de Indicadores Técnicos: {filename}...")
 
     dashboard_data = []
+    dashboard_csv_data = []
+    sr_data = []
 
     for item in lista_datos_completos:
         ticker = item["ticker"]
@@ -554,16 +558,13 @@ def generar_pdf_dashboard_tecnico(
             continue
 
         # Últimos 60 días para niveles clave
-        df_recent = df_viz.tail(60)
-        soporte = df_recent["low"].min()
-        resistencia = df_recent["high"].max()
-
         last = df_viz.iloc[-1]
         close = last["close"]
+        niveles_sr = calcular_soportes_resistencias(df_viz, close)
 
         # Distancias porcentuales
-        dist_sop = (close / soporte - 1) * 100 if soporte != 0 else 0
-        dist_res = (resistencia / close - 1) * 100 if close != 0 else 0
+        dist_sop = niveles_sr["Dist_Soporte_60_%"]
+        dist_res = niveles_sr["Dist_Resistencia_60_%"]
 
         # Bollinger avanzado
         upper = last["banda_superior"]
@@ -633,9 +634,28 @@ def generar_pdf_dashboard_tecnico(
                 t_txt,
             ]
         )
+        sr_row = [
+            display_t,
+            f"{niveles_sr['Soporte_20']:.2f}",
+            f"{niveles_sr['Resistencia_20']:.2f}",
+            f"{niveles_sr['Dist_Soporte_20_%']:.1f}%",
+            f"{niveles_sr['Dist_Resistencia_20_%']:.1f}%",
+            f"{niveles_sr['Soporte_60']:.2f}",
+            f"{niveles_sr['Resistencia_60']:.2f}",
+            f"{niveles_sr['Dist_Soporte_60_%']:.1f}%",
+            f"{niveles_sr['Dist_Resistencia_60_%']:.1f}%",
+            f"{niveles_sr['Soporte_120']:.2f}",
+            f"{niveles_sr['Resistencia_120']:.2f}",
+            f"{niveles_sr['Dist_Soporte_120_%']:.1f}%",
+            f"{niveles_sr['Dist_Resistencia_120_%']:.1f}%",
+        ]
+        sr_data.append(sr_row)
+        dashboard_csv_data.append(dashboard_data[-1] + sr_row[1:])
 
     # Ordenar por Ticker
     dashboard_data.sort(key=lambda x: x[0])
+    dashboard_csv_data.sort(key=lambda x: x[0])
+    sr_data.sort(key=lambda x: x[0])
 
     # --- NUEVO: Exportar a CSV para IA ---
     csv_filename = f"dashboard_data{suffix}.csv"
@@ -652,13 +672,29 @@ def generar_pdf_dashboard_tecnico(
         "MACD",
         "Trend",
     ]
+    sr_col_labels = [
+        "Ticker",
+        "S20",
+        "R20",
+        "%S20",
+        "%R20",
+        "S60",
+        "R60",
+        "%S60",
+        "%R60",
+        "S120",
+        "R120",
+        "%S120",
+        "%R120",
+    ]
+    csv_col_labels = col_labels + sr_col_labels[1:]
     try:
         import csv
 
         with open(csv_filename, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(col_labels)
-            writer.writerows(dashboard_data)
+            writer.writerow(csv_col_labels)
+            writer.writerows(dashboard_csv_data)
         print(f"Datos exportados a CSV: {csv_filename}")
     except Exception as e:
         print(f"Error exportando CSV: {e}")
@@ -683,6 +719,30 @@ def generar_pdf_dashboard_tecnico(
             table.auto_set_font_size(False)
             table.set_fontsize(7.5)
             table.scale(1, 2.2)
+
+            plt.tight_layout()
+            pdf.savefig(fig, dpi=72)
+            plt.close(fig)
+            import gc
+
+            gc.collect()
+
+        for i in range(0, len(sr_data), rows_per_page):
+            chunk = sr_data[i : i + rows_per_page]
+
+            fig, ax = plt.subplots(figsize=(11.69, 8.27))
+            ax.axis("off")
+            title = "Soportes y Resistencias por Ventana"
+            if fecha_ult:
+                title += f" (Datos hasta {fecha_ult})"
+            fig.suptitle(title, fontsize=16, y=0.95)
+
+            table = ax.table(
+                cellText=chunk, colLabels=sr_col_labels, loc="center", cellLoc="center"
+            )
+            table.auto_set_font_size(False)
+            table.set_fontsize(7.0)
+            table.scale(1, 2.0)
 
             plt.tight_layout()
             pdf.savefig(fig, dpi=72)

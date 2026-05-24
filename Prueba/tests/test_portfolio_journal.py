@@ -1,8 +1,10 @@
 import pandas as pd
 
 from estrategia.portfolio import (
+    MAX_APERTURA_SOBRE_ENTRADA_PCT,
     columnas_exportacion_eventos,
     normalizar_y_deduplicar_eventos,
+    _precio_demasiado_alejado_de_entrada,
     reconstruir_eventos_desde_snapshots,
 )
 
@@ -244,3 +246,151 @@ def test_evento_incluye_precio_entrada_y_precio_evento():
     assert cambio["T1"] == 9.0
     assert cambio["T2"] == 10.0
     assert cambio["Precio"] == 9.0
+
+
+def test_eventos_misma_fecha_ordenan_apertura_antes_de_alerta_leyendo_de_abajo_arriba():
+    eventos = pd.DataFrame(
+        [
+            {
+                "Fecha_Evento": "2026-05-12",
+                "Fecha_Deteccion": "2026-05-12",
+                "Ticker": "IBE.MC",
+                "Setup": "Pullback",
+                "Estado_Previo": "ABIERTA",
+                "Estado_Nuevo": "VIGILANCIA (T1)",
+                "Tipo_Evento": "ALERTA",
+                "Motivo": "Proximidad a T1",
+                "Precio_Entrada": 18.79,
+                "Stop_Inicial": 18.29,
+                "T1": 19.3,
+                "T2": 19.8,
+                "Precio": 19.43,
+                "P&L_%": 3.41,
+            },
+            {
+                "Fecha_Evento": "2026-05-12",
+                "Fecha_Deteccion": "2026-05-08",
+                "Ticker": "IBE.MC",
+                "Setup": "Pullback",
+                "Estado_Previo": "VIGILANCIA (T2)",
+                "Estado_Nuevo": "VIGILANCIA (T1)",
+                "Tipo_Evento": "ALERTA",
+                "Motivo": "Proximidad a T1",
+                "Precio_Entrada": 18.78,
+                "Stop_Inicial": 18.32,
+                "T1": 19.24,
+                "T2": 19.71,
+                "Precio": 19.43,
+                "P&L_%": 3.46,
+            },
+            {
+                "Fecha_Evento": "2026-05-12",
+                "Fecha_Deteccion": "2026-05-12",
+                "Ticker": "IBE.MC",
+                "Setup": "Pullback",
+                "Estado_Previo": "",
+                "Estado_Nuevo": "ABIERTA",
+                "Tipo_Evento": "APERTURA",
+                "Motivo": "Nueva seÃ±al VERDE",
+                "Precio_Entrada": 18.79,
+                "Stop_Inicial": 18.29,
+                "T1": 19.3,
+                "T2": 19.8,
+                "Precio": 19.43,
+                "P&L_%": 0.0,
+            },
+        ]
+    )
+
+    out = normalizar_y_deduplicar_eventos(eventos, EVENTOS_COLS)
+    eventos_ibe = out[out["Ticker"] == "IBE.MC"].reset_index(drop=True)
+
+    assert eventos_ibe.loc[0, "Fecha_Deteccion"] == "2026-05-12"
+    assert eventos_ibe.loc[0, "Tipo_Evento"] == "ALERTA"
+    assert eventos_ibe.loc[1, "Fecha_Deteccion"] == "2026-05-12"
+    assert eventos_ibe.loc[1, "Tipo_Evento"] == "APERTURA"
+    assert eventos_ibe.loc[2, "Fecha_Deteccion"] == "2026-05-08"
+    assert eventos_ibe.loc[2, "Tipo_Evento"] == "ALERTA"
+
+
+def test_no_reconstruye_apertura_si_primer_snapshot_ya_esta_en_vigilancia():
+    eventos = reconstruir_eventos_desde_snapshots(
+        [
+            (
+                pd.Timestamp("2026-05-12"),
+                _snapshot(
+                    [
+                        {
+                            "Ticker": "IBE.MC",
+                            "Fecha_Deteccion": "2026-05-12",
+                            "Estado_Actual": "VIGILANCIA (T1)",
+                            "Precio_Entrada": 18.79,
+                            "Stop_Inicial": 18.29,
+                            "T1": 19.3,
+                            "T2": 19.8,
+                            "Precio_Ultimo": 19.43,
+                            "P&L_%": 3.41,
+                        }
+                    ]
+                ),
+            )
+        ],
+        EVENTOS_COLS,
+    )
+
+    assert eventos.empty
+
+
+def test_normalizacion_elimina_apertura_ambigua_con_estado_vigilancia():
+    eventos = pd.DataFrame(
+        [
+            {
+                "Fecha_Evento": "2026-05-12",
+                "Fecha_Deteccion": "2026-05-12",
+                "Ticker": "IBE.MC",
+                "Setup": "Pullback",
+                "Estado_Previo": "",
+                "Estado_Nuevo": "ABIERTA",
+                "Tipo_Evento": "APERTURA",
+                "Motivo": "Nueva seÃ±al VERDE",
+                "Precio_Entrada": 18.79,
+                "Stop_Inicial": 18.29,
+                "T1": 19.3,
+                "T2": 19.8,
+                "Precio": 19.43,
+                "P&L_%": 0.0,
+            },
+            {
+                "Fecha_Evento": "2026-05-12",
+                "Fecha_Deteccion": "2026-05-12",
+                "Ticker": "IBE.MC",
+                "Setup": "Pullback",
+                "Estado_Previo": "",
+                "Estado_Nuevo": "VIGILANCIA (T1)",
+                "Tipo_Evento": "APERTURA",
+                "Motivo": "Nueva seÃ±al VERDE",
+                "Precio_Entrada": 18.79,
+                "Stop_Inicial": 18.29,
+                "T1": 19.3,
+                "T2": 19.8,
+                "Precio": 19.43,
+                "P&L_%": 3.41,
+            },
+        ]
+    )
+
+    out = normalizar_y_deduplicar_eventos(eventos, EVENTOS_COLS)
+
+    assert len(out) == 1
+    assert out.iloc[0]["Estado_Nuevo"] == "ABIERTA"
+    assert out.iloc[0]["Tipo_Evento"] == "APERTURA"
+
+
+def test_filtro_apertura_bloquea_precio_mas_de_1_5_pct_sobre_entrada():
+    assert MAX_APERTURA_SOBRE_ENTRADA_PCT == 1.5
+    assert not _precio_demasiado_alejado_de_entrada(
+        {"Entrada": 100.0, "Precio": 101.5}
+    )
+    assert _precio_demasiado_alejado_de_entrada(
+        {"Entrada": 100.0, "Precio": 101.51}
+    )

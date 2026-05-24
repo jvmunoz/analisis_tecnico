@@ -3,6 +3,11 @@ import pandas as pd
 
 from .reports_reportlab import generar_pdfs_enriquecidos_reportlab
 from .ibex import SECTORES_IBEX
+from .levels import (
+    ajustar_targets_por_resistencias,
+    calcular_soportes_resistencias,
+    rompe_soporte_previo,
+)
 from .portfolio import gestionar_journal_operaciones
 from .reports_matplotlib import generar_heatmap_sectores
 from .reports_reportlab import generar_informe_cartera_pdf
@@ -45,12 +50,12 @@ def calcular_analisis_enriquecido(lista_datos_completos):
         close = last["close"]
 
         # 1. Normalización de inputs
-        df_recent = df_viz.tail(60)
-        soporte_val = df_recent["low"].min()
-        resistencia_val = df_recent["high"].max()
+        niveles_sr = calcular_soportes_resistencias(df_viz, close)
+        soporte_val = niveles_sr["Soporte_60"]
+        resistencia_val = niveles_sr["Resistencia_60"]
 
-        dist_sop_p = (close / soporte_val - 1) if soporte_val != 0 else 0  # en decimal
-        dist_res_p = (resistencia_val / close - 1) if close != 0 else 0  # en decimal
+        dist_sop_p = niveles_sr["Dist_Soporte_60_%"] / 100.0
+        dist_res_p = niveles_sr["Dist_Resistencia_60_%"] / 100.0
 
         atr_p = last["atr_perc"] / 100.0  # dacimal
         rsi_val = last["rsi"]
@@ -72,6 +77,7 @@ def calcular_analisis_enriquecido(lista_datos_completos):
         caida_reciente_fuerte = _caida_reciente_fuerte(
             df_viz, last, close, macd_bias
         )
+        ruptura_soporte_20 = rompe_soporte_previo(df_viz, close, 20)
 
         # 2. Niveles Absolutos (Paso 2)
         sop_est = close * (1 - dist_sop_p)
@@ -98,8 +104,11 @@ def calcular_analisis_enriquecido(lista_datos_completos):
             stop_inicial = sop_est - (1.00 * atr_abs)
 
         r_risk = entrada - stop_inicial
-        t1 = entrada + r_risk
-        t2 = entrada + (2.0 * r_risk)
+        t1_riesgo = entrada + r_risk
+        t2_riesgo = entrada + (2.0 * r_risk)
+        t1, t2, metodo_t1, metodo_t2 = ajustar_targets_por_resistencias(
+            entrada, stop_inicial, niveles_sr
+        )
 
         # Trailing Stop (2.5 * ATR desde el precio actual o máximo reciente)
         # Para señales nuevas, el trailing stop es una referencia de salida dinámica
@@ -138,6 +147,7 @@ def calcular_analisis_enriquecido(lista_datos_completos):
                     and (rsi_val <= 45 or rsi_flag == "SV")
                     and rvol >= 0.15
                     and not caida_reciente_fuerte
+                    and not (ruptura_soporte_20 and macd_bias == "Baj.")
                 ):  # Cambiado de 1.15 a 0.15
                     semaforo = "VERDE"
                     estado = "EJECUTAR"
@@ -189,7 +199,21 @@ def calcular_analisis_enriquecido(lista_datos_completos):
                 "Stop": round(stop_inicial, 2),
                 "T1": round(t1, 2),
                 "T2": round(t2, 2),
+                "T1_Riesgo": round(t1_riesgo, 2),
+                "T2_Riesgo": round(t2_riesgo, 2),
+                "Metodo_T1": metodo_t1,
+                "Metodo_T2": metodo_t2,
                 "Trailing_Stop": round(trailing_stop, 2),
+                **{
+                    key: round(value, 2)
+                    for key, value in niveles_sr.items()
+                    if key.startswith(("Soporte_", "Resistencia_"))
+                },
+                **{
+                    key: round(value, 1)
+                    for key, value in niveles_sr.items()
+                    if key.startswith(("Dist_Soporte_", "Dist_Resistencia_"))
+                },
                 "Inputs": {
                     "dist_sop_p": dist_sop_p,
                     "dist_res_p": dist_res_p,
@@ -202,6 +226,8 @@ def calcular_analisis_enriquecido(lista_datos_completos):
                     "trend_sma": trend_sma,
                     "rvol": rvol,
                     "caida_reciente_fuerte": caida_reciente_fuerte,
+                    "ruptura_soporte_20": ruptura_soporte_20,
+                    "niveles_sr": niveles_sr,
                 },
             }
         )

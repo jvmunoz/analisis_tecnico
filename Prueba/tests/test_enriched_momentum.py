@@ -1,6 +1,7 @@
 import pandas as pd
 
 from estrategia.enriched import calcular_analisis_enriquecido
+from estrategia.levels import ajustar_targets_por_resistencias
 
 
 def _df_viz(closes, macd_hist=-0.1):
@@ -67,7 +68,8 @@ def test_pullback_sin_caida_fuerte_reciente_puede_ser_verde():
             98.6,
             98.4,
             98.2,
-        ]
+        ],
+        macd_hist=0.1,
     )
 
     out = _analizar(df_viz)
@@ -76,3 +78,65 @@ def test_pullback_sin_caida_fuerte_reciente_puede_ser_verde():
     assert out["Semaforo"] == "VERDE"
     assert out["Estado"] == "EJECUTAR"
     assert out["Inputs"]["caida_reciente_fuerte"] is False
+    assert "Soporte_20" in out
+    assert "Resistencia_120" in out
+    assert "Dist_Soporte_60_%" in out
+
+
+def test_pullback_rompiendo_soporte_20_con_macd_bajista_no_es_verde():
+    df_viz = _df_viz(
+        [
+            100.0,
+            100.2,
+            100.1,
+            100.3,
+            100.2,
+            100.1,
+            100.0,
+            100.2,
+            100.1,
+            98.0,
+        ],
+        macd_hist=-0.1,
+    )
+
+    out = _analizar(df_viz)
+
+    assert out["Setup"] == "Pullback"
+    assert out["Semaforo"] == "AMARILLO"
+    assert out["Estado"] == "VIGILAR"
+    assert out["Inputs"]["ruptura_soporte_20"] is True
+
+
+def test_targets_se_ajustan_a_resistencias_si_encajan_en_rango_riesgo():
+    t1, t2, metodo_t1, metodo_t2 = ajustar_targets_por_resistencias(
+        entrada=100.0,
+        stop=95.0,
+        niveles_sr={
+            "Resistencia_20": 104.8,
+            "Resistencia_60": 110.2,
+            "Resistencia_120": 118.0,
+        },
+    )
+
+    assert t1 == 104.8
+    assert t2 == 110.2
+    assert metodo_t1 == "Resistencia"
+    assert metodo_t2 == "Resistencia"
+
+
+def test_targets_mantienen_riesgo_si_no_hay_resistencia_valida():
+    t1, t2, metodo_t1, metodo_t2 = ajustar_targets_por_resistencias(
+        entrada=100.0,
+        stop=95.0,
+        niveles_sr={
+            "Resistencia_20": 102.0,
+            "Resistencia_60": 130.0,
+            "Resistencia_120": 140.0,
+        },
+    )
+
+    assert t1 == 105.0
+    assert t2 == 110.0
+    assert metodo_t1 == "Riesgo"
+    assert metodo_t2 == "Riesgo"

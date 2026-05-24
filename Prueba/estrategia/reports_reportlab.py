@@ -608,6 +608,13 @@ def generar_pdfs_enriquecidos_reportlab(data_enriquecida, fecha_ult="", **kwargs
         "H2Style", parent=styles["Heading2"], fontSize=16, spaceAfter=10
     )
     style_normal = styles["Normal"]
+    style_table_small = ParagraphStyle(
+        "TableSmall",
+        parent=styles["Normal"],
+        fontSize=6,
+        leading=7,
+        alignment=1,
+    )
 
     elements1.append(
         Paragraph("Informe técnico - Tabla completa con niveles teóricos", style_title)
@@ -625,6 +632,12 @@ def generar_pdfs_enriquecidos_reportlab(data_enriquecida, fecha_ult="", **kwargs
     elements1.append(
         Paragraph(
             "- Pullback: Aprovechamiento de retrocesos a soportes en tendencia alcista.",
+            style_normal,
+        )
+    )
+    elements1.append(
+        Paragraph(
+            "- T1/T2: objetivos mixtos; Rgo = múltiplo de riesgo, Res = resistencia relevante.",
             style_normal,
         )
     )
@@ -653,9 +666,30 @@ def generar_pdfs_enriquecidos_reportlab(data_enriquecida, fecha_ult="", **kwargs
             "T1",
             "T2",
             "Stop Seg.",
+            "S/R20",
+            "S/R60",
+            "S/R120",
         ]
     ]
     portfolio_tickers = kwargs.get("portfolio_tickers", [])
+    def _sr_cell(item, window):
+        soporte = item.get(f"Soporte_{window}", "")
+        resistencia = item.get(f"Resistencia_{window}", "")
+        dist_s = item.get(f"Dist_Soporte_{window}_%", "")
+        dist_r = item.get(f"Dist_Resistencia_{window}_%", "")
+        return Paragraph(
+            f"{soporte}/{resistencia}<br/>{dist_s}%/{dist_r}%",
+            style_table_small,
+        )
+
+    def _target_cell(item, target):
+        metodo = item.get(f"Metodo_T{target}", "Riesgo")
+        etiqueta = "Res" if metodo == "Resistencia" else "Rgo"
+        return Paragraph(
+            f"{item[f'T{target}']}<br/>{etiqueta}",
+            style_table_small,
+        )
+
     for item in data_enriquecida:
         ticker_display = item["Ticker"]
         if ticker_display in portfolio_tickers:
@@ -671,19 +705,27 @@ def generar_pdfs_enriquecidos_reportlab(data_enriquecida, fecha_ult="", **kwargs
                 item["Score"],
                 item["Entrada"],
                 item["Stop"],
-                item["T1"],
-                item["T2"],
+                _target_cell(item, 1),
+                _target_cell(item, 2),
                 item["Trailing_Stop"],
+                _sr_cell(item, 20),
+                _sr_cell(item, 60),
+                _sr_cell(item, 120),
             ]
         )
 
-    t1 = Table(table_data, colWidths=[60, 50, 60, 70, 60, 35, 55, 55, 55, 55, 60])
+    t1 = Table(
+        table_data,
+        colWidths=[48, 42, 42, 50, 45, 30, 40, 40, 38, 38, 45, 67, 67, 67],
+        repeatRows=1,
+    )
     ts1 = TableStyle(
         [
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9E2F3")),
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#C9D3E1")),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]
     )
 
@@ -700,6 +742,7 @@ def generar_pdfs_enriquecidos_reportlab(data_enriquecida, fecha_ult="", **kwargs
 
     t1.setStyle(ts1)
     elements1.append(t1)
+    elements1.append(Spacer(1, 15))
     # SECCION DE ALERTAS (ENTRADA y SALIDA)
     entry_alerts = []
     exit_alerts = []
