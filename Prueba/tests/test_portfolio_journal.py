@@ -394,3 +394,6 @@ def test_filtro_apertura_bloquea_precio_mas_de_1_5_pct_sobre_entrada():
     assert _precio_demasiado_alejado_de_entrada(
         {"Entrada": 100.0, "Precio": 101.51}
     )
+    assert not _precio_demasiado_alejado_de_entrada(
+        {"Entrada": 100.0, "Precio": 104.0}, max_pct=5.0
+    )

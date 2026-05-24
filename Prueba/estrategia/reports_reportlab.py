@@ -615,6 +615,12 @@ def generar_pdfs_enriquecidos_reportlab(data_enriquecida, fecha_ult="", **kwargs
         leading=7,
         alignment=1,
     )
+    style_table_text = ParagraphStyle(
+        "TableText",
+        parent=styles["Normal"],
+        fontSize=6,
+        leading=7,
+    )
 
     elements1.append(
         Paragraph("Informe técnico - Tabla completa con niveles teóricos", style_title)
@@ -743,6 +749,57 @@ def generar_pdfs_enriquecidos_reportlab(data_enriquecida, fecha_ult="", **kwargs
     t1.setStyle(ts1)
     elements1.append(t1)
     elements1.append(Spacer(1, 15))
+
+    # Tabla B: Explicabilidad
+    explicabilidad_data = [
+        [
+            "Ticker",
+            "Sem.",
+            "Setup",
+            "Motivo Semaforo",
+            "Motivo Setup",
+            "Checks Fallidos",
+        ]
+    ]
+    for item in data_enriquecida:
+        explicabilidad_data.append(
+            [
+                item["Ticker"],
+                item["Semaforo"],
+                item["Setup"],
+                Paragraph(item.get("Motivo_Semaforo", ""), style_table_text),
+                Paragraph(item.get("Motivo_Setup", ""), style_table_text),
+                Paragraph(item.get("Checks_Fallidos", ""), style_table_text),
+            ]
+        )
+
+    elements1.append(Paragraph("Explicabilidad de señales", style_h2))
+    elements1.append(
+        Paragraph(
+            "Resumen operativo de los motivos que justifican el semaforo, el setup y las condiciones no cumplidas.",
+            style_normal,
+        )
+    )
+    elements1.append(Spacer(1, 5))
+    exp_table = Table(
+        explicabilidad_data,
+        colWidths=[50, 38, 45, 170, 170, 185],
+        repeatRows=1,
+    )
+    exp_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2F0D9")),
+                ("ALIGN", (0, 0), (2, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#C9D3E1")),
+                ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+            ]
+        )
+    )
+    elements1.append(exp_table)
+    elements1.append(Spacer(1, 15))
+
     # SECCION DE ALERTAS (ENTRADA y SALIDA)
     entry_alerts = []
     exit_alerts = []

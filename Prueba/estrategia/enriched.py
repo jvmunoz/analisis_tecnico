@@ -15,6 +15,51 @@ from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 
 
+DEFAULT_ENRICHED_RULES = {
+    "max_apertura_sobre_entrada_pct": 1.5,
+    "pullback_max_dist_soporte_pct": 5.0,
+    "pullback_rsi_max": 45.0,
+    "breakout_candidate_max_dist_resistencia_pct": 3.0,
+    "breakout_setup_max_dist_resistencia_pct": 2.0,
+    "breakout_verde_max_dist_resistencia_pct": 2.0,
+    "sobrecompra_dist_resistencia_pct": 1.5,
+    "rvol_min": 0.15,
+    "rvol_score_full_min": 0.20,
+    "caida_fuerte_5d_pct": -5.0,
+    "caida_fuerte_10d_pct": -8.0,
+    "ruptura_soporte_window": 20,
+}
+
+
+def _normalizar_reglas_enriquecidas(rules_config=None):
+    reglas = dict(DEFAULT_ENRICHED_RULES)
+    if isinstance(rules_config, dict):
+        for key, value in rules_config.items():
+            if key not in reglas:
+                continue
+            try:
+                reglas[key] = float(value)
+            except (TypeError, ValueError):
+                continue
+    for key in (
+        "pullback_max_dist_soporte_pct",
+        "breakout_candidate_max_dist_resistencia_pct",
+        "breakout_setup_max_dist_resistencia_pct",
+        "breakout_verde_max_dist_resistencia_pct",
+        "rvol_score_full_min",
+    ):
+        if reglas[key] <= 0:
+            reglas[key] = DEFAULT_ENRICHED_RULES[key]
+    if reglas["rvol_min"] < 0:
+        reglas["rvol_min"] = DEFAULT_ENRICHED_RULES["rvol_min"]
+    reglas["ruptura_soporte_window"] = int(reglas["ruptura_soporte_window"])
+    if reglas["ruptura_soporte_window"] <= 0:
+        reglas["ruptura_soporte_window"] = DEFAULT_ENRICHED_RULES[
+            "ruptura_soporte_window"
+        ]
+    return reglas
+
+
 def _retorno_ventana(df_viz, close, sesiones):
     if len(df_viz) <= sesiones:
         return 0
@@ -24,21 +69,191 @@ def _retorno_ventana(df_viz, close, sesiones):
     return close / precio_previo - 1
 
 
-def _caida_reciente_fuerte(df_viz, last, close, macd_bias):
+def _caida_reciente_fuerte(df_viz, last, close, macd_bias, reglas):
     ret_5 = _retorno_ventana(df_viz, close, 5)
     ret_10 = _retorno_ventana(df_viz, close, 10)
+    umbral_5 = reglas["caida_fuerte_5d_pct"] / 100.0
+    umbral_10 = reglas["caida_fuerte_10d_pct"] / 100.0
     return bool(
         close < last["sma_short"]
         and macd_bias == "Baj."
-        and (ret_5 <= -0.05 or ret_10 <= -0.08)
+        and (ret_5 <= umbral_5 or ret_10 <= umbral_10)
     )
 
 
-def calcular_analisis_enriquecido(lista_datos_completos):
+def _motivo_setup(
+    setup,
+    trend_sma,
+    macd_bias,
+    dist_res_p,
+    dist_sop_p,
+    rsi_val,
+    rsi_flag,
+    breakout_setup_max_dist_res,
+    pullback_max_dist_sop,
+    reglas,
+):
+    if setup == "Breakout":
+        if (
+            trend_sma == "Alc."
+            and macd_bias == "Alc."
+            and dist_res_p <= breakout_setup_max_dist_res
+        ):
+            return (
+                "Breakout por tendencia y MACD alcistas con precio cerca de resistencia "
+                f"({dist_res_p:.1%})"
+            )
+        return "Breakout por defecto: no cumple condiciones claras de Pullback"
+
+    motivos = []
+    if dist_sop_p <= pullback_max_dist_sop:
+        motivos.append(f"cerca de soporte ({dist_sop_p:.1%})")
+    if rsi_val <= reglas["pullback_rsi_max"]:
+        motivos.append(f"RSI bajo/controlado ({rsi_val:.1f})")
+    if rsi_flag == "SV":
+        motivos.append("RSI en sobreventa")
+    if not motivos:
+        motivos.append("retroceso tecnico")
+    return "Pullback por " + ", ".join(motivos)
+
+
+def _explicar_senal(
+    setup,
+    semaforo,
+    estado,
+    trend_sma,
+    macd_bias,
+    adx_regime,
+    dist_sop_p,
+    dist_res_p,
+    rsi_val,
+    rsi_flag,
+    rvol,
+    caida_reciente_fuerte,
+    ruptura_soporte_20,
+    rojo_deterioro,
+    rojo_sc,
+    breakout_verde_max_dist_res,
+    pullback_max_dist_sop,
+    reglas,
+):
+    checks_verdes = []
+    checks_fallidos = []
+
+    def add_check(condicion, ok, fail):
+        if condicion:
+            checks_verdes.append(ok)
+        else:
+            checks_fallidos.append(fail)
+
+    if setup == "Breakout":
+        add_check(
+            trend_sma == "Alc.",
+            "Tendencia SMA alcista",
+            f"Tendencia SMA no alcista ({trend_sma})",
+        )
+        add_check(
+            macd_bias == "Alc.",
+            "MACD alcista",
+            f"MACD no alcista ({macd_bias})",
+        )
+        add_check(
+            adx_regime in ["Trend", "Neutral"],
+            f"ADX valido ({adx_regime})",
+            f"ADX lateral ({adx_regime})",
+        )
+        add_check(
+            dist_res_p <= breakout_verde_max_dist_res,
+            f"Cerca de resistencia ({dist_res_p:.1%})",
+            f"Lejos de resistencia ({dist_res_p:.1%})",
+        )
+        add_check(
+            rsi_flag != "SC",
+            f"RSI no sobrecomprado ({rsi_val:.1f})",
+            f"RSI sobrecomprado ({rsi_val:.1f})",
+        )
+        add_check(
+            rvol >= reglas["rvol_min"],
+            f"RVOL suficiente ({rvol:.2f})",
+            f"RVOL insuficiente ({rvol:.2f})",
+        )
+    else:
+        add_check(
+            dist_sop_p <= pullback_max_dist_sop,
+            f"Cerca de soporte ({dist_sop_p:.1%})",
+            f"Lejos de soporte ({dist_sop_p:.1%})",
+        )
+        add_check(
+            adx_regime in ["Trend", "Neutral"],
+            f"ADX valido ({adx_regime})",
+            f"ADX lateral ({adx_regime})",
+        )
+        add_check(
+            rsi_val <= reglas["pullback_rsi_max"] or rsi_flag == "SV",
+            f"RSI compatible con Pullback ({rsi_val:.1f})",
+            f"RSI no suficientemente bajo ({rsi_val:.1f})",
+        )
+        add_check(
+            rvol >= reglas["rvol_min"],
+            f"RVOL suficiente ({rvol:.2f})",
+            f"RVOL insuficiente ({rvol:.2f})",
+        )
+        add_check(
+            not caida_reciente_fuerte,
+            "Sin caida reciente fuerte",
+            "Caida reciente fuerte",
+        )
+        add_check(
+            not (ruptura_soporte_20 and macd_bias == "Baj."),
+            "Sin ruptura bajista de soporte",
+            "Ruptura de soporte con MACD bajista",
+        )
+
+    if rojo_deterioro:
+        motivo_semaforo = "ROJO: tendencia SMA y MACD bajistas"
+    elif rojo_sc:
+        motivo_semaforo = "AMARILLO: sobrecompra cerca de resistencia"
+    elif semaforo == "VERDE":
+        motivo_semaforo = f"VERDE: cumple criterios de {setup}"
+    elif checks_fallidos:
+        motivo_semaforo = "AMARILLO: faltan condiciones para VERDE"
+    else:
+        motivo_semaforo = f"{semaforo}: sin bloqueo principal identificado"
+
+    if estado == "EJECUTAR":
+        motivo_no_apertura = ""
+    elif rojo_deterioro:
+        motivo_no_apertura = "No abre: deterioro tecnico"
+    elif checks_fallidos:
+        motivo_no_apertura = "No abre: " + "; ".join(checks_fallidos[:3])
+    else:
+        motivo_no_apertura = "No abre: semaforo no ejecutable"
+
+    return {
+        "Motivo_Semaforo": motivo_semaforo,
+        "Motivo_No_Apertura": motivo_no_apertura,
+        "Checks_Verdes": "; ".join(checks_verdes),
+        "Checks_Fallidos": "; ".join(checks_fallidos),
+    }
+
+
+def calcular_analisis_enriquecido(lista_datos_completos, rules_config=None):
     """
     Traduce las reglas de INSTRUCCIONES_CHATGPT_20251224.txt a lógica determinista de Python.
     """
     analisis_enriquecido = []
+    reglas = _normalizar_reglas_enriquecidas(rules_config)
+    pullback_max_dist_sop = reglas["pullback_max_dist_soporte_pct"] / 100.0
+    breakout_candidate_max_dist_res = (
+        reglas["breakout_candidate_max_dist_resistencia_pct"] / 100.0
+    )
+    breakout_setup_max_dist_res = (
+        reglas["breakout_setup_max_dist_resistencia_pct"] / 100.0
+    )
+    breakout_verde_max_dist_res = (
+        reglas["breakout_verde_max_dist_resistencia_pct"] / 100.0
+    )
+    sobrecompra_dist_res = reglas["sobrecompra_dist_resistencia_pct"] / 100.0
 
     for item in lista_datos_completos:
         ticker = item["ticker"]
@@ -75,9 +290,12 @@ def calcular_analisis_enriquecido(lista_datos_completos):
         trend_sma = "Alc." if last["sma_short"] > last["sma_long"] else "Baj."
         rvol = last["rvol"]
         caida_reciente_fuerte = _caida_reciente_fuerte(
-            df_viz, last, close, macd_bias
+            df_viz, last, close, macd_bias, reglas
         )
-        ruptura_soporte_20 = rompe_soporte_previo(df_viz, close, 20)
+        ruptura_soporte_window = reglas["ruptura_soporte_window"]
+        ruptura_soporte_20 = rompe_soporte_previo(
+            df_viz, close, ruptura_soporte_window
+        )
 
         # 2. Niveles Absolutos (Paso 2)
         sop_est = close * (1 - dist_sop_p)
@@ -85,15 +303,36 @@ def calcular_analisis_enriquecido(lista_datos_completos):
         atr_abs = close * atr_p
 
         # 3. Asignación de Setup (Paso 3)
-        breakout_cand = dist_res_p <= 0.03
-        pullback_cand = (dist_sop_p <= 0.05) or (rsi_val <= 45) or (rsi_flag == "SV")
+        breakout_cand = dist_res_p <= breakout_candidate_max_dist_res
+        pullback_cand = (
+            (dist_sop_p <= pullback_max_dist_sop)
+            or (rsi_val <= reglas["pullback_rsi_max"])
+            or (rsi_flag == "SV")
+        )
 
-        if trend_sma == "Alc." and macd_bias == "Alc." and dist_res_p <= 0.02:
+        if (
+            trend_sma == "Alc."
+            and macd_bias == "Alc."
+            and dist_res_p <= breakout_setup_max_dist_res
+        ):
             setup = "Breakout"
         elif pullback_cand:
             setup = "Pullback"
         else:
             setup = "Breakout"
+
+        motivo_setup = _motivo_setup(
+            setup,
+            trend_sma,
+            macd_bias,
+            dist_res_p,
+            dist_sop_p,
+            rsi_val,
+            rsi_flag,
+            breakout_setup_max_dist_res,
+            pullback_max_dist_sop,
+            reglas,
+        )
 
         # 4. Cálculo de Entrada/Stop/T1/T2 (Paso 4)
         if setup == "Breakout":
@@ -122,7 +361,7 @@ def calcular_analisis_enriquecido(lista_datos_completos):
         rojo_deterioro = trend_sma == "Baj." and macd_bias == "Baj."
 
         # Sobrecalentamiento (Evita Verde, pero no es Rojo)
-        rojo_sc = rsi_flag == "SC" and dist_res_p <= 0.015
+        rojo_sc = rsi_flag == "SC" and dist_res_p <= sobrecompra_dist_res
 
         if rojo_deterioro:
             semaforo = "ROJO"
@@ -134,18 +373,18 @@ def calcular_analisis_enriquecido(lista_datos_completos):
                     trend_sma == "Alc."
                     and macd_bias == "Alc."
                     and adx_regime in ["Trend", "Neutral"]
-                    and dist_res_p <= 0.02
+                    and dist_res_p <= breakout_verde_max_dist_res
                     and rsi_flag != "SC"
-                    and rvol >= 0.15
+                    and rvol >= reglas["rvol_min"]
                 ):  # Cambiado de 1.15 a 0.15 (instrucciones)
                     semaforo = "VERDE"
                     estado = "EJECUTAR"
             else:  # Pullback
                 if (
-                    dist_sop_p <= 0.05
+                    dist_sop_p <= pullback_max_dist_sop
                     and adx_regime in ["Trend", "Neutral"]
-                    and (rsi_val <= 45 or rsi_flag == "SV")
-                    and rvol >= 0.15
+                    and (rsi_val <= reglas["pullback_rsi_max"] or rsi_flag == "SV")
+                    and rvol >= reglas["rvol_min"]
                     and not caida_reciente_fuerte
                     and not (ruptura_soporte_20 and macd_bias == "Baj.")
                 ):  # Cambiado de 1.15 a 0.15
@@ -163,9 +402,18 @@ def calcular_analisis_enriquecido(lista_datos_completos):
             return max(min(v, max_v), min_v)
 
         if setup == "Breakout":
-            score_c = 2 * clamp((0.02 - dist_res_p) / 0.02, 0, 1)
+            score_c = 2 * clamp(
+                (breakout_verde_max_dist_res - dist_res_p)
+                / breakout_verde_max_dist_res,
+                0,
+                1,
+            )
         else:
-            score_c = 2 * clamp((0.05 - dist_sop_p) / 0.05, 0, 1)
+            score_c = 2 * clamp(
+                (pullback_max_dist_sop - dist_sop_p) / pullback_max_dist_sop,
+                0,
+                1,
+            )
         # D) RSI (0-1)
         score_d = 0
         if setup == "Breakout":
@@ -180,12 +428,37 @@ def calcular_analisis_enriquecido(lista_datos_completos):
                 score_d = 0.5
         # E) Vol (0-1)
         score_e = (
-            1 if rvol >= 0.20 else 0.5 if rvol >= 0.15 else 0
+            1
+            if rvol >= reglas["rvol_score_full_min"]
+            else 0.5
+            if rvol >= reglas["rvol_min"]
+            else 0
         )  # Cambiado de 1.20 a 0.20
 
         score_final = round(score_a + score_b + score_c + score_d + score_e, 2)
         if rojo_sc:
             score_final = 4.00
+
+        explicacion = _explicar_senal(
+            setup,
+            semaforo,
+            estado,
+            trend_sma,
+            macd_bias,
+            adx_regime,
+            dist_sop_p,
+            dist_res_p,
+            rsi_val,
+            rsi_flag,
+            rvol,
+            caida_reciente_fuerte,
+            ruptura_soporte_20,
+            rojo_deterioro,
+            rojo_sc,
+            breakout_verde_max_dist_res,
+            pullback_max_dist_sop,
+            reglas,
+        )
 
         analisis_enriquecido.append(
             {
@@ -194,6 +467,8 @@ def calcular_analisis_enriquecido(lista_datos_completos):
                 "Semaforo": semaforo,
                 "Estado": estado,
                 "Setup": setup,
+                "Motivo_Setup": motivo_setup,
+                **explicacion,
                 "Score": score_final,
                 "Entrada": round(entrada, 2),
                 "Stop": round(stop_inicial, 2),
@@ -227,7 +502,9 @@ def calcular_analisis_enriquecido(lista_datos_completos):
                     "rvol": rvol,
                     "caida_reciente_fuerte": caida_reciente_fuerte,
                     "ruptura_soporte_20": ruptura_soporte_20,
+                    "ruptura_soporte_window": ruptura_soporte_window,
                     "niveles_sr": niveles_sr,
+                    "reglas_enriquecidas": reglas,
                 },
             }
         )
@@ -311,12 +588,48 @@ def calcular_pesos_inversion_enriquecido(
 
     return data_enriquecida
 
+
+def exportar_explicabilidad_senales(data_enriquecida, fecha_v=""):
+    suffix = f"_{fecha_v.replace('-', '')}" if fecha_v else ""
+    filename = f"EXPLICABILIDAD_SENALES{suffix}.csv"
+    columnas = [
+        "Ticker",
+        "Precio",
+        "Semaforo",
+        "Estado",
+        "Setup",
+        "Score",
+        "Motivo_Semaforo",
+        "Motivo_Setup",
+        "Motivo_No_Apertura",
+        "Checks_Verdes",
+        "Checks_Fallidos",
+        "Entrada",
+        "Stop",
+        "T1",
+        "T2",
+        "Dist_Soporte_60_%",
+        "Dist_Resistencia_60_%",
+        "Metodo_T1",
+        "Metodo_T2",
+    ]
+    rows = []
+    for item in data_enriquecida:
+        rows.append({col: item.get(col, "") for col in columnas})
+    pd.DataFrame(rows, columns=columnas).to_csv(
+        filename, index=False, encoding="utf-8-sig"
+    )
+    print(f"Explicabilidad de senales exportada: {filename}")
+    return filename
+
+
 def ejecutar_flujo_enriquecido_completo(
     lista_datos_completos,
     fecha_v,
     tickers_cartera=[],
     df_cartera=pd.DataFrame(),
     df_log_completo=pd.DataFrame(),
+    rules_config=None,
 ):
     """
     Orquestador principal del análisis enriquecido determinista.
@@ -332,7 +645,9 @@ def ejecutar_flujo_enriquecido_completo(
     )
 
     # 2. Calcular todo nativamente en Python
-    data_enriquecida = calcular_analisis_enriquecido(lista_datos_completos)
+    data_enriquecida = calcular_analisis_enriquecido(
+        lista_datos_completos, rules_config=rules_config
+    )
 
     # 3. Calcular pesos dinámicos según Amplitud
     data_enriquecida = calcular_pesos_inversion_enriquecido(
@@ -345,13 +660,20 @@ def ejecutar_flujo_enriquecido_completo(
     )
 
     # 5. Gestionar Journal de Operaciones (Persistencia y Seguimiento)
-    gestionar_journal_operaciones(data_enriquecida, fecha_v=fecha_v)
+    gestionar_journal_operaciones(
+        data_enriquecida, fecha_v=fecha_v, rules_config=rules_config
+    )
 
-    # 6. Generar Heatmap Sectorial
+    # 6. Exportar explicabilidad de senales
+    explicabilidad_file = exportar_explicabilidad_senales(
+        data_enriquecida, fecha_v=fecha_v
+    )
+
+    # 7. Generar Heatmap Sectorial
     heatmap_path = "heatmap_sectores.png"
     generar_heatmap_sectores(data_enriquecida, filename=heatmap_path)
 
-    # 7. Generar Informe de Cartera Personal (si existe)
+    # 8. Generar Informe de Cartera Personal (si existe)
     if not df_cartera.empty:
         generar_informe_cartera_pdf(
             data_enriquecida,
@@ -361,7 +683,7 @@ def ejecutar_flujo_enriquecido_completo(
             fecha_ult=fecha_v,
         )
 
-    # 8. Generar PDFs Enriquecidos
+    # 9. Generar PDFs Enriquecidos
     generar_pdfs_enriquecidos_reportlab(
         data_enriquecida,
         fecha_ult=fecha_v,
@@ -373,6 +695,13 @@ def ejecutar_flujo_enriquecido_completo(
     )
 
     print("=" * 80 + "\n")
+    return {
+        "data_enriquecida": data_enriquecida,
+        "breadth": breadth_val,
+        "exposure": exposure_goal,
+        "alertas_corr": alertas_corr,
+        "explicabilidad_file": explicabilidad_file,
+    }
 
 
 # ==============================================================================

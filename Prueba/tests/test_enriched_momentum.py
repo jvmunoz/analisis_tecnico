@@ -1,6 +1,9 @@
 import pandas as pd
 
-from estrategia.enriched import calcular_analisis_enriquecido
+from estrategia.enriched import (
+    calcular_analisis_enriquecido,
+    exportar_explicabilidad_senales,
+)
 from estrategia.levels import ajustar_targets_por_resistencias
 
 
@@ -25,9 +28,9 @@ def _df_viz(closes, macd_hist=-0.1):
     return pd.DataFrame(rows)
 
 
-def _analizar(df_viz):
+def _analizar(df_viz, rules_config=None):
     return calcular_analisis_enriquecido(
-        [{"ticker": "AENA.MC", "df_viz": df_viz}]
+        [{"ticker": "AENA.MC", "df_viz": df_viz}], rules_config=rules_config
     )[0]
 
 
@@ -53,6 +56,9 @@ def test_pullback_con_caida_fuerte_reciente_no_es_verde():
     assert out["Semaforo"] == "AMARILLO"
     assert out["Estado"] == "VIGILAR"
     assert out["Inputs"]["caida_reciente_fuerte"] is True
+    assert out["Motivo_Semaforo"] == "AMARILLO: faltan condiciones para VERDE"
+    assert "Caida reciente fuerte" in out["Checks_Fallidos"]
+    assert out["Motivo_No_Apertura"].startswith("No abre:")
 
 
 def test_pullback_sin_caida_fuerte_reciente_puede_ser_verde():
@@ -77,10 +83,39 @@ def test_pullback_sin_caida_fuerte_reciente_puede_ser_verde():
     assert out["Setup"] == "Pullback"
     assert out["Semaforo"] == "VERDE"
     assert out["Estado"] == "EJECUTAR"
+    assert out["Motivo_Semaforo"] == "VERDE: cumple criterios de Pullback"
+    assert "Cerca de soporte" in out["Checks_Verdes"]
+    assert out["Motivo_No_Apertura"] == ""
     assert out["Inputs"]["caida_reciente_fuerte"] is False
     assert "Soporte_20" in out
     assert "Resistencia_120" in out
     assert "Dist_Soporte_60_%" in out
+
+
+def test_reglas_enriquecidas_permiten_endurecer_rvol_minimo():
+    df_viz = _df_viz(
+        [
+            100.0,
+            99.8,
+            99.6,
+            99.4,
+            99.2,
+            99.0,
+            98.8,
+            98.6,
+            98.4,
+            98.2,
+        ],
+        macd_hist=0.1,
+    )
+
+    out = _analizar(df_viz, rules_config={"rvol_min": 0.50})
+
+    assert out["Setup"] == "Pullback"
+    assert out["Semaforo"] == "AMARILLO"
+    assert out["Estado"] == "VIGILAR"
+    assert out["Inputs"]["reglas_enriquecidas"]["rvol_min"] == 0.50
+    assert "RVOL insuficiente" in out["Checks_Fallidos"]
 
 
 def test_pullback_rompiendo_soporte_20_con_macd_bajista_no_es_verde():
@@ -140,3 +175,42 @@ def test_targets_mantienen_riesgo_si_no_hay_resistencia_valida():
     assert t2 == 110.0
     assert metodo_t1 == "Riesgo"
     assert metodo_t2 == "Riesgo"
+
+
+def test_exporta_csv_explicabilidad_senales(monkeypatch):
+    df_viz = _df_viz(
+        [
+            100.0,
+            99.8,
+            99.6,
+            99.4,
+            99.2,
+            99.0,
+            98.8,
+            98.6,
+            98.4,
+            98.2,
+        ],
+        macd_hist=0.1,
+    )
+    out = _analizar(df_viz)
+    captured = {}
+
+    def fake_to_csv(self, filename, index=False, encoding=None):
+        captured["filename"] = filename
+        captured["index"] = index
+        captured["encoding"] = encoding
+        captured["df"] = self.copy()
+
+    monkeypatch.setattr(pd.DataFrame, "to_csv", fake_to_csv)
+
+    filename = exportar_explicabilidad_senales([out], fecha_v="2026-05-12")
+    exported = captured["df"]
+
+    assert filename == "EXPLICABILIDAD_SENALES_20260512.csv"
+    assert captured["filename"] == filename
+    assert captured["index"] is False
+    assert captured["encoding"] == "utf-8-sig"
+    assert exported.loc[0, "Ticker"] == "AENA.MC"
+    assert exported.loc[0, "Motivo_Semaforo"] == "VERDE: cumple criterios de Pullback"
+    assert "Checks_Fallidos" in exported.columns

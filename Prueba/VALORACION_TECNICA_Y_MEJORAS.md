@@ -557,6 +557,8 @@ Beneficio:
 - Mas trazabilidad.
 - Mayor control por usuario.
 
+Estado actual: implementado como primera mejora incremental. La clave `enriched_rules` permite ajustar los principales umbrales operativos sin modificar codigo.
+
 ### 2. Exportar explicabilidad de senales
 
 Anadir campos:
@@ -574,6 +576,8 @@ Beneficio:
 - El usuario entiende por que hay o no hay apertura.
 - Reduce analisis manual.
 - Facilita auditoria.
+
+Estado actual: implementado. El analisis enriquecido incorpora estos campos en cada registro, genera `EXPLICABILIDAD_SENALES_YYYYMMDD.csv` y anade una seccion de explicabilidad al PDF tecnico enriquecido.
 
 ### 3. Crear resumen ejecutivo por run
 
@@ -600,6 +604,8 @@ Beneficio:
 - Ruta de lectura clara.
 - Menos dependencia de abrir muchos PDF.
 
+Estado actual: implementado. Cada run genera `RESUMEN_EJECUTIVO_YYYYMMDD.md` con estado del run, mercado, journal, oportunidades, riesgos y artefactos clave.
+
 ### 4. End-to-end test pequeno
 
 Crear dataset sintetico y probar:
@@ -614,6 +620,8 @@ Crear dataset sintetico y probar:
 Beneficio:
 
 - Evita regresiones en reglas delicadas.
+
+Estado actual: implementado. Se anadio `tests/test_e2e_sintetico.py`, que valida cache sin descarga, analisis enriquecido, journal/eventos, bloqueo por precio > 1.5% sobre entrada, explicabilidad y resumen ejecutivo.
 
 ## 5.2 Prioridad media
 
@@ -1008,4 +1016,3 @@ pip install -r requirements.txt
 Conclusion:
 
 La aplicacion es fuerte como herramienta local avanzada de analisis tecnico y seguimiento. El mayor valor esta en la combinacion de backtesting, informes, analisis enriquecido y journal. Para evolucionarla de manera segura, el foco deberia estar en explicabilidad, parametrizacion, persistencia del journal y separacion entre calculo y renderizado.
-

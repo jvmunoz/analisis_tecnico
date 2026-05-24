@@ -706,8 +706,9 @@ Dentro se generan artefactos.
 
 | Archivo | Uso |
 |---|---|
-| `Analisis_tecnico_tabla_completa_enriquecido_YYYYMMDD.pdf` | Tabla completa de semaforos, setups, niveles, stops y objetivos. |
+| `Analisis_tecnico_tabla_completa_enriquecido_YYYYMMDD.pdf` | Tabla completa de semaforos, setups, niveles, stops, objetivos y explicabilidad de senales. |
 | `Asignacion_por_riesgo_enriquecido_YYYYMMDD.pdf` | Propuesta de asignacion por riesgo. |
+| `EXPLICABILIDAD_SENALES_YYYYMMDD.csv` | Auditoria ticker a ticker con motivos del semaforo, motivo del setup, checks cumplidos y checks fallidos. |
 | `heatmap_sectores.png` | Mapa sectorial de estado tecnico. |
 | `INFORME_MI_CARTERA_YYYYMMDD.pdf` | Estado de cartera personal. |
 
@@ -747,6 +748,7 @@ S120, R120, %S120, %R120
 | `ERROR_RESUMEN_YYYYMMDD.csv/json` | Errores del run. |
 | `RUN_SNAPSHOT_YYYYMMDD.json` | Configuracion y universo del run. |
 | `RUN_SUMMARY_YYYYMMDD.json` | Resumen operativo del run. |
+| `RESUMEN_EJECUTIVO_YYYYMMDD.md` | Lectura guiada del run con mercado, journal, oportunidades, riesgos y artefactos clave. |
 | `ARTIFACTS_INDEX_YYYYMMDD.json` | Inventario de artefactos. |
 | `runs/latest_run.json` | Ultimo run conocido. |
 
@@ -837,6 +839,64 @@ S120, R120, %S120, %R120
 | `walk_forward.step_years` | Paso entre splits. |
 | `bootstrap.iters` | Iteraciones bootstrap. |
 
+## 11.7 Reglas enriquecidas
+
+Las reglas operativas del analisis enriquecido se configuran en `enriched_rules`.
+
+| Clave | Uso |
+|---|---|
+| `max_apertura_sobre_entrada_pct` | Bloquea nuevas aperturas si el precio esta demasiado por encima de la entrada tecnica. |
+| `pullback_max_dist_soporte_pct` | Distancia maxima al soporte 60 para validar Pullback verde. |
+| `pullback_rsi_max` | RSI maximo para considerar Pullback por debilidad controlada. |
+| `breakout_candidate_max_dist_resistencia_pct` | Distancia maxima a resistencia para considerar candidato Breakout. |
+| `breakout_setup_max_dist_resistencia_pct` | Distancia maxima a resistencia para asignar setup Breakout con tendencia y MACD alcistas. |
+| `breakout_verde_max_dist_resistencia_pct` | Distancia maxima a resistencia para que Breakout sea verde. |
+| `sobrecompra_dist_resistencia_pct` | Distancia a resistencia que, junto con RSI sobrecomprado, penaliza el score. |
+| `rvol_min` | Volumen relativo minimo para semaforo verde. |
+| `rvol_score_full_min` | Volumen relativo a partir del cual el score de volumen es pleno. |
+| `caida_fuerte_5d_pct` | Umbral de caida a 5 sesiones para bloquear Pullback verde con deterioro. |
+| `caida_fuerte_10d_pct` | Umbral de caida a 10 sesiones para bloquear Pullback verde con deterioro. |
+| `ruptura_soporte_window` | Ventana usada para detectar ruptura de soporte previo. |
+
+## 11.8 Explicabilidad de senales
+
+El analisis enriquecido genera campos explicativos pensados para responder rapidamente tres preguntas:
+
+- Por que el activo tiene ese semaforo.
+- Por que se ha clasificado como Pullback o Breakout.
+- Que condiciones faltan para pasar a VERDE o abrir una operacion.
+
+Campos principales:
+
+| Campo | Significado |
+|---|---|
+| `Motivo_Semaforo` | Resumen de la decision del semaforo: verde ejecutable, amarillo por condiciones incompletas o rojo por deterioro. |
+| `Motivo_Setup` | Razon de clasificacion como Pullback o Breakout. |
+| `Motivo_No_Apertura` | Explicacion sintetica cuando el estado no es `EJECUTAR`. |
+| `Checks_Verdes` | Condiciones tecnicas cumplidas. |
+| `Checks_Fallidos` | Condiciones tecnicas no cumplidas o bloqueos detectados. |
+
+Estos campos se consultan en:
+
+- `EXPLICABILIDAD_SENALES_YYYYMMDD.csv`, para auditoria completa.
+- `Analisis_tecnico_tabla_completa_enriquecido_YYYYMMDD.pdf`, en la seccion `Explicabilidad de senales`.
+
+## 11.9 Resumen ejecutivo del run
+
+El archivo `RESUMEN_EJECUTIVO_YYYYMMDD.md` es el primer documento que conviene abrir tras cada ejecucion.
+
+Incluye:
+
+- Estado del run: fecha efectiva, carpeta de salida, tickers objetivo/procesados y errores.
+- Mercado y semaforos: amplitud, exposicion recomendada y distribucion de semaforos.
+- Journal del dia: aperturas, cierres y alertas.
+- Top oportunidades: candidatos ordenados por estado ejecutable, semaforo y score.
+- Riesgos destacados: senales rojas o checks fallidos relevantes.
+- Cambios frente al run anterior: referencias a los archivos que permiten comparar.
+- Artefactos clave: lista corta de ficheros que conviene revisar.
+
+Este resumen no sustituye al PDF tecnico ni al journal; sirve como indice operativo para decidir que mirar primero.
+
 ## 12. Apendice: manual de usuario
 
 ## 12.1 Requisitos
@@ -878,13 +938,14 @@ python EstrategiaCombinadaRSI.py --config config.json --batch
 2. Actualizar `cartera.csv` si hubo compras o ventas.
 3. Ejecutar la aplicacion.
 4. Abrir la carpeta `Prueba/runs/YYYYMMDD`.
-5. Revisar `run.log`.
-6. Revisar `DATA_VALIDATION_YYYYMMDD.csv`.
-7. Revisar `journal_eventos_hasta_YYYYMMDD.csv`.
-8. Revisar `journal_operaciones_hasta_YYYYMMDD.csv`.
-9. Revisar `Analisis_tecnico_tabla_completa_enriquecido_YYYYMMDD.pdf`.
-10. Revisar `DASHBOARD_INDICADORES_TECNICOS_YYYYMMDD.pdf`.
-11. Revisar `INFORME_MI_CARTERA_YYYYMMDD.pdf` si se usa cartera.
+5. Abrir `RESUMEN_EJECUTIVO_YYYYMMDD.md`.
+6. Revisar `run.log` si el resumen indica errores o avisos.
+7. Revisar `DATA_VALIDATION_YYYYMMDD.csv`.
+8. Revisar `journal_eventos_hasta_YYYYMMDD.csv`.
+9. Revisar `journal_operaciones_hasta_YYYYMMDD.csv`.
+10. Revisar `Analisis_tecnico_tabla_completa_enriquecido_YYYYMMDD.pdf`.
+11. Revisar `DASHBOARD_INDICADORES_TECNICOS_YYYYMMDD.pdf`.
+12. Revisar `INFORME_MI_CARTERA_YYYYMMDD.pdf` si se usa cartera.
 
 ## 12.4 Rutina semanal recomendada
 
@@ -1027,13 +1088,14 @@ Comprobar:
 
 Para cada candidato verde:
 
-1. Si `Precio > Entrada * 1.015`, descartar apertura nueva.
-2. Si `Stop` esta demasiado cerca para la volatilidad del activo, vigilar.
-3. Si T1 esta demasiado cerca y T2 no compensa, vigilar.
-4. Si el activo esta en resistencia fuerte, revisar breakout/falsa ruptura.
-5. Si hay caida reciente fuerte, revisar riesgo de deterioro.
-6. Si el activo ya esta en cartera, priorizar gestion de posicion existente.
-7. Si hay varios candidatos del mismo sector, controlar concentracion.
+1. Revisar `Motivo_Semaforo`, `Motivo_Setup` y `Checks_Fallidos`.
+2. Si `Precio > Entrada * 1.015`, descartar apertura nueva.
+3. Si `Stop` esta demasiado cerca para la volatilidad del activo, vigilar.
+4. Si T1 esta demasiado cerca y T2 no compensa, vigilar.
+5. Si el activo esta en resistencia fuerte, revisar breakout/falsa ruptura.
+6. Si hay caida reciente fuerte, revisar riesgo de deterioro.
+7. Si el activo ya esta en cartera, priorizar gestion de posicion existente.
+8. Si hay varios candidatos del mismo sector, controlar concentracion.
 
 ## 12.11 Buenas practicas
 
@@ -1120,4 +1182,3 @@ Puede haber varias operaciones del mismo ticker y setup si fueron detectadas en 
 | Stop | Nivel de invalidacion de la operacion. |
 | RVOL | Volumen relativo. |
 | OOS | Fuera de muestra. |
-

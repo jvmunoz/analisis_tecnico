@@ -217,6 +217,200 @@ def _guardar_artifacts_index(fecha_v):
         return None
 
 
+def _fmt_pct(value):
+    try:
+        return f"{float(value):.2f}%"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def _cargar_csv_si_existe(filename):
+    path = Path(filename)
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path)
+    except Exception as e:
+        print(f"[AVISO] No se pudo leer {filename}: {e}")
+        return pd.DataFrame()
+
+
+def _filtrar_eventos(df_eventos, tipo_evento):
+    if df_eventos.empty or "Tipo_Evento" not in df_eventos.columns:
+        return pd.DataFrame()
+    return df_eventos[df_eventos["Tipo_Evento"].astype(str) == tipo_evento]
+
+
+def _lineas_top_oportunidades(data_enriquecida, limite=8):
+    if not data_enriquecida:
+        return ["- Sin datos enriquecidos disponibles."]
+    candidatos = sorted(
+        data_enriquecida,
+        key=lambda x: (
+            x.get("Estado") != "EJECUTAR",
+            x.get("Semaforo") != "VERDE",
+            -float(x.get("Score", 0) or 0),
+        ),
+    )
+    lineas = []
+    for item in candidatos[:limite]:
+        lineas.append(
+            "- {ticker}: {semaforo} / {estado} / {setup} / score {score} / entrada {entrada} / stop {stop} / {motivo}".format(
+                ticker=item.get("Ticker", ""),
+                semaforo=item.get("Semaforo", ""),
+                estado=item.get("Estado", ""),
+                setup=item.get("Setup", ""),
+                score=item.get("Score", ""),
+                entrada=item.get("Entrada", ""),
+                stop=item.get("Stop", ""),
+                motivo=item.get("Motivo_Semaforo", ""),
+            )
+        )
+    return lineas or ["- Sin oportunidades destacadas."]
+
+
+def _lineas_riesgos_destacados(data_enriquecida, limite=8):
+    if not data_enriquecida:
+        return ["- Sin datos enriquecidos disponibles."]
+    riesgos = [
+        item
+        for item in data_enriquecida
+        if item.get("Semaforo") == "ROJO" or item.get("Checks_Fallidos")
+    ]
+    riesgos = sorted(
+        riesgos,
+        key=lambda x: (
+            x.get("Semaforo") != "ROJO",
+            -float(x.get("Score", 0) or 0),
+        ),
+    )
+    lineas = []
+    for item in riesgos[:limite]:
+        motivo = item.get("Motivo_No_Apertura") or item.get("Motivo_Semaforo", "")
+        fallidos = item.get("Checks_Fallidos", "")
+        detalle = f"{motivo}. {fallidos}".strip()
+        lineas.append(f"- {item.get('Ticker', '')}: {detalle}")
+    return lineas or ["- Sin riesgos destacados por las reglas enriquecidas."]
+
+
+def _lineas_eventos(df_eventos, tipo_evento, limite=10):
+    if df_eventos.empty or "Tipo_Evento" not in df_eventos.columns:
+        return ["- Sin registros."]
+    subset = df_eventos[df_eventos["Tipo_Evento"].astype(str) == tipo_evento]
+    if subset.empty:
+        return ["- Sin registros."]
+    lineas = []
+    for _, row in subset.head(limite).iterrows():
+        lineas.append(
+            "- {ticker} ({setup}): {estado} | {motivo} | precio {precio} | P&L {pnl}".format(
+                ticker=row.get("Ticker", ""),
+                setup=row.get("Setup", ""),
+                estado=row.get("Estado_Nuevo", ""),
+                motivo=row.get("Motivo", ""),
+                precio=row.get("Precio", ""),
+                pnl=_fmt_pct(row.get("P&L_%", "")),
+            )
+        )
+    return lineas
+
+
+def _generar_resumen_ejecutivo_md(
+    fecha_v,
+    summary,
+    error_log,
+    enriched_result=None,
+    signal_log=None,
+):
+    suffix = fecha_v.replace("-", "")
+    filename = f"RESUMEN_EJECUTIVO_{suffix}.md"
+    enriched_result = enriched_result or {}
+    data_enriquecida = enriched_result.get("data_enriquecida") or []
+    df_eventos = _cargar_csv_si_existe(f"journal_eventos_hasta_{suffix}.csv")
+    df_explicabilidad = _cargar_csv_si_existe(f"EXPLICABILIDAD_SENALES_{suffix}.csv")
+    aperturas = _filtrar_eventos(df_eventos, "APERTURA")
+    cierres = _filtrar_eventos(df_eventos, "CIERRE")
+    alertas = _filtrar_eventos(df_eventos, "ALERTA")
+
+    semaforos = {}
+    if data_enriquecida:
+        for item in data_enriquecida:
+            semaforo = item.get("Semaforo", "N/A")
+            semaforos[semaforo] = semaforos.get(semaforo, 0) + 1
+    elif not df_explicabilidad.empty and "Semaforo" in df_explicabilidad.columns:
+        semaforos = df_explicabilidad["Semaforo"].value_counts().to_dict()
+
+    lines = [
+        f"# Resumen ejecutivo - {fecha_v}",
+        "",
+        "## 1. Estado del run",
+        "",
+        f"- Fecha efectiva de datos: {fecha_v}",
+        f"- Carpeta de salida: `{Path.cwd()}`",
+        f"- Tickers objetivo: {summary.get('tickers_objetivo', 'N/A') if summary else 'N/A'}",
+        f"- Tickers procesados: {summary.get('tickers_procesados', 'N/A') if summary else 'N/A'}",
+        f"- Tickers con resultado: {summary.get('tickers_con_resultado', 'N/A') if summary else 'N/A'}",
+        f"- Duracion: {summary.get('duration_seconds', 'N/A') if summary else 'N/A'} segundos",
+        f"- Errores registrados: {len(error_log or [])}",
+        "",
+        "## 2. Mercado y semaforos",
+        "",
+        f"- Amplitud IBEX: {_fmt_pct(enriched_result.get('breadth'))}",
+        f"- Exposicion recomendada: {_fmt_pct(enriched_result.get('exposure'))}",
+        f"- Semaforos: {', '.join(f'{k}={v}' for k, v in sorted(semaforos.items())) if semaforos else 'N/A'}",
+        "",
+        "## 3. Journal del dia",
+        "",
+        f"- Nuevas aperturas: {len(aperturas)}",
+        f"- Cierres: {len(cierres)}",
+        f"- Alertas T1/T2: {len(alertas)}",
+        "",
+        "### Aperturas",
+        "",
+        *_lineas_eventos(df_eventos, "APERTURA"),
+        "",
+        "### Cierres",
+        "",
+        *_lineas_eventos(df_eventos, "CIERRE"),
+        "",
+        "### Alertas",
+        "",
+        *_lineas_eventos(df_eventos, "ALERTA"),
+        "",
+        "## 4. Top oportunidades",
+        "",
+        *_lineas_top_oportunidades(data_enriquecida),
+        "",
+        "## 5. Riesgos destacados",
+        "",
+        *_lineas_riesgos_destacados(data_enriquecida),
+        "",
+        "## 6. Cambios frente al run anterior",
+        "",
+        "- Revisar `journal_eventos_hasta_*.csv` para altas, cierres y cambios de vigilancia.",
+        "- Revisar `EXPLICABILIDAD_SENALES_*.csv` para diferencias de motivo entre runs.",
+        "- Revisar `ARTIFACTS_INDEX_*.json` para confirmar que todos los informes esperados se han generado.",
+        "",
+        "## 7. Artefactos clave",
+        "",
+        f"- `RUN_SUMMARY_{suffix}.json`",
+        f"- `RUN_SNAPSHOT_{suffix}.json`",
+        f"- `journal_operaciones_hasta_{suffix}.csv`",
+        f"- `journal_eventos_hasta_{suffix}.csv`",
+        f"- `EXPLICABILIDAD_SENALES_{suffix}.csv`",
+        f"- `Analisis_tecnico_tabla_completa_enriquecido_{suffix}.pdf`",
+    ]
+    if signal_log:
+        lines.extend(["", f"- Senales trazadas: {len(signal_log)}"])
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        print(f"Resumen ejecutivo generado: {filename}")
+        return filename
+    except Exception as e:
+        print(f"[AVISO] No se pudo generar resumen ejecutivo: {e}")
+        return None
+
+
 def main():
     started_at_ts = time.time()
     init_runtime()
@@ -512,6 +706,7 @@ def main():
         lista_metricas_globales = []
         todas_las_fechas_trading = set()
         error_log = []
+        enriched_result = None
 
         perf_cfg = CONFIG.get("performance", {})
         max_tickers = perf_cfg.get("max_tickers")
@@ -763,12 +958,13 @@ def main():
             )
 
             # AnÃ¡lisis enriquecido
-            ejecutar_flujo_enriquecido_completo(
+            enriched_result = ejecutar_flujo_enriquecido_completo(
                 datos_para_reporte_detallado,
                 fecha_v,
                 tickers_cartera,
                 df_cartera,
                 df_log_completo=df_log_completo,
+                rules_config=CONFIG.get("enriched_rules", {}),
             )
 
             generar_recomendacion_perfiles(
@@ -963,6 +1159,15 @@ def main():
             error_log=error_log,
             started_at_ts=started_at_ts,
         )
+        resumen_ejecutivo = _generar_resumen_ejecutivo_md(
+            fecha_v=fecha_v,
+            summary=summary,
+            error_log=error_log,
+            enriched_result=enriched_result,
+            signal_log=signal_log,
+        )
+        if isinstance(summary, dict):
+            summary["resumen_ejecutivo"] = resumen_ejecutivo
         artifacts_index = _guardar_artifacts_index(fecha_v)
         if isinstance(summary, dict):
             summary["artifacts_index"] = artifacts_index

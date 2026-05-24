@@ -26,6 +26,9 @@ Prueba/runs/
 **/WALK_FORWARD_*.csv
 **/dashboard_data_*.csv
 **/journal_operaciones_hasta_*.csv
+**/journal_eventos_hasta_*.csv
+**/EXPLICABILIDAD_SENALES_*.csv
+**/RESUMEN_EJECUTIVO_*.md
 **/heatmap_sectores.png
 **/SENS_*.png
 

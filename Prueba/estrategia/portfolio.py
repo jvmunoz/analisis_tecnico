@@ -346,7 +346,10 @@ def cargar_cartera(filename="cartera.csv"):
         return pd.DataFrame(), [], None, pd.DataFrame()
 
 def gestionar_journal_operaciones(
-    data_enriquecida, filename="journal_operaciones.csv", fecha_v=""
+    data_enriquecida,
+    filename="journal_operaciones.csv",
+    fecha_v="",
+    rules_config=None,
 ):
     """
     Registra señales VERDE y hace seguimiento de las existentes.
@@ -385,6 +388,17 @@ def gestionar_journal_operaciones(
         "Precio",
         "P&L_%",
     ]
+    max_apertura_sobre_entrada_pct = MAX_APERTURA_SOBRE_ENTRADA_PCT
+    if isinstance(rules_config, dict):
+        try:
+            max_apertura_sobre_entrada_pct = float(
+                rules_config.get(
+                    "max_apertura_sobre_entrada_pct",
+                    MAX_APERTURA_SOBRE_ENTRADA_PCT,
+                )
+            )
+        except (TypeError, ValueError):
+            max_apertura_sobre_entrada_pct = MAX_APERTURA_SOBRE_ENTRADA_PCT
 
     # 1. Identificar y consolidar journals del run actual + historicos de runs previos
     cwd = Path.cwd()
@@ -496,7 +510,9 @@ def gestionar_journal_operaciones(
     # 3. Añadir nuevas señales VERDE detectadas hoy
     nuevas_senales = [d for d in data_enriquecida if d["Semaforo"] == "VERDE"]
     for s in nuevas_senales:
-        if _precio_demasiado_alejado_de_entrada(s):
+        if _precio_demasiado_alejado_de_entrada(
+            s, max_pct=max_apertura_sobre_entrada_pct
+        ):
             continue
         ticker = s["Ticker"]
         if (
